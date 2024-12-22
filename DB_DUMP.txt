@@ -1,0 +1,1951 @@
+C:\Windows\System32>"C:\Program Files\PostgreSQL\17\bin\pg_dump.exe" -U postgres -h localhost -p 5432 postgres
+Parola:
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 17.0
+-- Dumped by pg_dump version 17.0
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: public; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+-- *not* creating schema, since initdb creates it
+
+
+ALTER SCHEMA public OWNER TO postgres;
+
+--
+-- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: postgres
+--
+
+COMMENT ON SCHEMA public IS '';
+
+
+--
+-- Name: ekle_ameliyat(character varying, character varying, date, text); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.ekle_ameliyat(IN p_hasta_tc_no character varying, IN p_doktor_tc_no character varying, IN p_tarih date, IN p_aciklama text)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM doktorlar
+        WHERE tc_no = p_doktor_tc_no
+    ) THEN
+        RAISE EXCEPTION 'Boyle bir doktor bulunmuyor';
+    END IF;
+END;
+$$;
+
+
+ALTER PROCEDURE public.ekle_ameliyat(IN p_hasta_tc_no character varying, IN p_doktor_tc_no character varying, IN p_tarih date, IN p_aciklama text) OWNER TO postgres;
+
+--
+-- Name: email_kontrol(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.email_kontrol() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+    IF NEW.email !~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN
+        RAISE EXCEPTION 'GeÃ§ersiz e-posta formatÄ±: %', NEW.email;
+    END IF;
+    RETURN NEW;
+END;
+$_$;
+
+
+ALTER FUNCTION public.email_kontrol() OWNER TO postgres;
+
+--
+-- Name: hasta_durum_guncelle(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.hasta_durum_guncelle() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  UPDATE hastalar
+  SET durum = 'Randevu AlÄ±ndÄ±'
+  WHERE tc_no = NEW.hasta_tc_no;
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.hasta_durum_guncelle() OWNER TO postgres;
+
+--
+-- Name: hasta_telefon_kontrol(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.hasta_telefon_kontrol() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF LENGTH(NEW.telefon) <> 10 THEN
+        RAISE EXCEPTION 'Telefon numarasÄ± 10 haneli olmalÄ±dÄ±r.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.hasta_telefon_kontrol() OWNER TO postgres;
+
+--
+-- Name: kontrol_ameliyat_tarihi(date); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.kontrol_ameliyat_tarihi(IN p_tarih date)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF p_tarih < CURRENT_DATE THEN
+        RAISE EXCEPTION 'Bu tarihe ameliyat alamazsiniz.';
+    END IF;
+END;
+$$;
+
+
+ALTER PROCEDURE public.kontrol_ameliyat_tarihi(IN p_tarih date) OWNER TO postgres;
+
+--
+-- Name: kontrol_ameliyat_trigger_function(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.kontrol_ameliyat_trigger_function() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- ProsedÃ¼rÃ¼ Ã§aÄYÄ±rarak kontrol yap
+    CALL ekle_ameliyat(
+        NEW.hasta_tc_no,
+        NEW.doktor_tc_no,
+        NEW.tarih,
+        NEW.aciklama
+    );
+
+    -- ProsedÃ¼r hata dÃ¶ndÃ¼rmezse iÅYlem devam eder
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.kontrol_ameliyat_trigger_function() OWNER TO postgres;
+
+--
+-- Name: kontrol_hasta_tc_no(character); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.kontrol_hasta_tc_no(IN p_tc_no character)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM hastalar WHERE tc_no = p_tc_no) THEN
+        RAISE EXCEPTION 'Bu TC kimlik numarasÄ± zaten kayÄ±tlÄ±.';
+    END IF;
+END;
+$$;
+
+
+ALTER PROCEDURE public.kontrol_hasta_tc_no(IN p_tc_no character) OWNER TO postgres;
+
+--
+-- Name: log_islemi(text, text); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.log_islemi(IN pk_deger text, IN islem text)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO logs (pk_deger, islem) VALUES (islem, pk_deger);
+END;
+$$;
+
+
+ALTER PROCEDURE public.log_islemi(IN pk_deger text, IN islem text) OWNER TO postgres;
+
+--
+-- Name: log_islemi_function(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.log_islemi_function() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        CALL log_islemi('Yeni ' || TG_TABLE_NAME || ' eklendi', NEW.tc_no::TEXT);
+    ELSIF (TG_OP = 'DELETE') THEN
+        CALL log_islemi(TG_TABLE_NAME || ' silindi', OLD.tc_no::TEXT);
+        ELSIF (TG_OP = 'UPDATE') THEN
+                CALL log_islemi(TG_TABLE_NAME || ' guncellendi', OLD.tc_no::TEXT);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.log_islemi_function() OWNER TO postgres;
+
+--
+-- Name: log_islemi_function_id(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.log_islemi_function_id() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') THEN
+        CALL log_islemi('Yeni ' || TG_TABLE_NAME || ' eklendi', NEW.id::TEXT);
+    ELSIF (TG_OP = 'DELETE') THEN
+        CALL log_islemi(TG_TABLE_NAME || ' silindi', OLD.id::TEXT);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION public.log_islemi_function_id() OWNER TO postgres;
+
+--
+-- Name: odeme_ekle(character, character varying, numeric, date); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.odeme_ekle(IN p_hasta_tc character, IN p_odeme_turu character varying, IN p_miktar numeric, IN p_tarih date)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF p_odeme_turu NOT IN ('Nakit', 'Kredi KartÄ±', 'Sigorta') THEN
+        RAISE EXCEPTION 'GeÃ§ersiz Ã¶deme tÃ¼rÃ¼. Sadece Nakit, Kredi KartÄ± veya Sigorta kabul edilir.';
+    END IF;
+
+    IF p_miktar <= 0 THEN
+        RAISE EXCEPTION 'Odeme miktarÄ± negatif olamaz.';
+    END IF;
+
+    INSERT INTO maliye (hasta_tc_no, odeme_turu, miktar, tarih)
+    VALUES (p_hasta_tc, p_odeme_turu, p_miktar, p_tarih);
+END;
+$$;
+
+
+ALTER PROCEDURE public.odeme_ekle(IN p_hasta_tc character, IN p_odeme_turu character varying, IN p_miktar numeric, IN p_tarih date) OWNER TO postgres;
+
+--
+-- Name: personel_telefon_kontrol(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.personel_telefon_kontrol() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF LENGTH(NEW.telefon) <> 10 THEN
+        RAISE EXCEPTION 'Personel telefon numarasÄ± 10 haneli olmalÄ±dÄ±r.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.personel_telefon_kontrol() OWNER TO postgres;
+
+--
+-- Name: randevu_ekle(character, character, integer, date, time without time zone); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.randevu_ekle(IN p_hasta_tc character, IN p_doktor_tc character, IN p_poliklinik_id integer, IN p_randevu_tarihi date, IN p_randevu_saati time without time zone)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    mevcut_randevu INT;
+BEGIN
+    SELECT COUNT(*)
+    INTO mevcut_randevu
+    FROM randevular
+    WHERE doktor_tc_no = p_doktor_tc
+      AND randevu_tarihi = p_randevu_tarihi
+      AND randevu_saati = p_randevu_saati;
+
+    IF mevcut_randevu > 0 THEN
+        RAISE EXCEPTION 'Belirtilen tarih ve saatte doktorun baÅYka bir randevusu var.';
+    END IF;
+
+    INSERT INTO randevular (hasta_tc_no, doktor_tc_no, poliklinik_id, randevu_tarihi, randevu_saati)
+    VALUES (p_hasta_tc, p_doktor_tc, p_poliklinik_id, p_randevu_tarihi, p_randevu_saati);
+END;
+$$;
+
+
+ALTER PROCEDURE public.randevu_ekle(IN p_hasta_tc character, IN p_doktor_tc character, IN p_poliklinik_id integer, IN p_randevu_tarihi date, IN p_randevu_saati time without time zone) OWNER TO postgres;
+
+--
+-- Name: randevu_saati_kontrol(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.randevu_saati_kontrol() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.randevu_saati < '08:00:00'::time OR NEW.randevu_saati > '18:00:00'::time THEN
+        RAISE EXCEPTION 'Randevu saati yalnÄ±zca 08:00 ile 18:00 arasÄ±nda olabilir.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.randevu_saati_kontrol() OWNER TO postgres;
+
+--
+-- Name: recete_olusturma_kontrol(character, character, date); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.recete_olusturma_kontrol(IN _hasta_tc_no character, IN _doktor_tc_no character, IN _tarih date)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    hasta_var INTEGER;
+    doktor_var INTEGER;
+BEGIN
+    SELECT COUNT(*)
+    INTO hasta_var
+    FROM hastalar
+    WHERE tc_no = _hasta_tc_no;
+
+    IF hasta_var = 0 THEN
+        RAISE EXCEPTION 'Hasta bulunamadÄ±: %', _hasta_tc_no;
+    END IF;
+
+    SELECT COUNT(*)
+    INTO doktor_var
+    FROM doktorlar
+    WHERE tc_no = _doktor_tc_no;
+
+    IF doktor_var = 0 THEN
+        RAISE EXCEPTION 'Doktor bulunamadÄ±: %', _doktor_tc_no;
+    END IF;
+
+    INSERT INTO receteler (hasta_tc_no, doktor_tc_no, tarih)
+    VALUES (_hasta_tc_no, _doktor_tc_no, _tarih);
+END;
+$$;
+
+
+ALTER PROCEDURE public.recete_olusturma_kontrol(IN _hasta_tc_no character, IN _doktor_tc_no character, IN _tarih date) OWNER TO postgres;
+
+--
+-- Name: recete_olusturma_kontrol(character, character, timestamp with time zone); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.recete_olusturma_kontrol(IN _hasta_tc_no character, IN _doktor_tc_no character, IN _tarih timestamp with time zone)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    hasta_var INTEGER;
+    doktor_var INTEGER;
+BEGIN
+    SELECT COUNT(*)
+    INTO hasta_var
+    FROM hastalar
+    WHERE tc_no = _hasta_tc_no;
+
+    IF hasta_var = 0 THEN
+        RAISE EXCEPTION 'Hasta bulunamadÄ±: %', _hasta_tc_no;
+    END IF;
+
+    SELECT COUNT(*)
+    INTO doktor_var
+    FROM doktorlar
+    WHERE tc_no = _doktor_tc_no;
+
+    IF doktor_var = 0 THEN
+        RAISE EXCEPTION 'Doktor bulunamadÄ±: %', _doktor_tc_no;
+    END IF;
+
+    INSERT INTO receteler (hasta_tc_no, doktor_tc_no, tarih)
+    VALUES (_hasta_tc_no, _doktor_tc_no, _tarih);
+END;
+$$;
+
+
+ALTER PROCEDURE public.recete_olusturma_kontrol(IN _hasta_tc_no character, IN _doktor_tc_no character, IN _tarih timestamp with time zone) OWNER TO postgres;
+
+--
+-- Name: yatis_ekle(character, integer, date, date); Type: PROCEDURE; Schema: public; Owner: postgres
+--
+
+CREATE PROCEDURE public.yatis_ekle(IN p_hasta_tc character, IN p_oda_id integer, IN p_baslangic_tarihi date, IN p_bitis_tarihi date)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Tarih kontrolÃ¼
+    IF p_baslangic_tarihi > p_bitis_tarihi THEN
+        RAISE EXCEPTION 'BaÅYlangÄ±Ã§ tarihi, bitiÅY tarihinden sonra olamaz.';
+    END IF;
+
+    -- YatÄ±ÅYÄ± ekle
+    INSERT INTO yatislar (hasta_tc_no, oda_id, baslangic_tarihi, bitis_tarihi)
+    VALUES (p_hasta_tc, p_oda_id, p_baslangic_tarihi, p_bitis_tarihi);
+END;
+$$;
+
+
+ALTER PROCEDURE public.yatis_ekle(IN p_hasta_tc character, IN p_oda_id integer, IN p_baslangic_tarihi date, IN p_bitis_tarihi date) OWNER TO postgres;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: ameliyatlar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.ameliyatlar (
+    id integer NOT NULL,
+    hasta_tc_no character(11),
+    doktor_tc_no character(11),
+    tarih date,
+    aciklama text,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.ameliyatlar OWNER TO postgres;
+
+--
+-- Name: ameliyatlar_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.ameliyatlar_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.ameliyatlar_id_seq OWNER TO postgres;
+
+--
+-- Name: ameliyatlar_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.ameliyatlar_id_seq OWNED BY public.ameliyatlar.id;
+
+
+--
+-- Name: personel; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.personel (
+    tc_no character(11) NOT NULL,
+    ad character varying(50),
+    soyad character varying(50),
+    pozisyon character varying(50),
+    telefon character(10),
+    email character varying(100),
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.personel OWNER TO postgres;
+
+--
+-- Name: doktorlar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.doktorlar (
+    tc_no character(11),
+    uzmanlik character varying(100),
+    aktif boolean DEFAULT true
+)
+INHERITS (public.personel);
+
+
+ALTER TABLE public.doktorlar OWNER TO postgres;
+
+--
+-- Name: hasta_hastaliklar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.hasta_hastaliklar (
+    id integer NOT NULL,
+    hasta_tc_no character(11),
+    hastalik_id integer,
+    teshis_tarihi date,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.hasta_hastaliklar OWNER TO postgres;
+
+--
+-- Name: hasta_hastaliklar_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.hasta_hastaliklar_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.hasta_hastaliklar_id_seq OWNER TO postgres;
+
+--
+-- Name: hasta_hastaliklar_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.hasta_hastaliklar_id_seq OWNED BY public.hasta_hastaliklar.id;
+
+
+--
+-- Name: hastalar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.hastalar (
+    tc_no character(11) NOT NULL,
+    ad character varying(50),
+    soyad character varying(50),
+    dogum_tarihi date,
+    cinsiyet boolean,
+    telefon character(10),
+    adres text,
+    durum character varying(50),
+    aktif boolean DEFAULT true,
+    email text
+);
+
+
+ALTER TABLE public.hastalar OWNER TO postgres;
+
+--
+-- Name: hastaliklar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.hastaliklar (
+    id integer NOT NULL,
+    ad character varying(100),
+    aciklama text,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.hastaliklar OWNER TO postgres;
+
+--
+-- Name: hastaliklar_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.hastaliklar_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.hastaliklar_id_seq OWNER TO postgres;
+
+--
+-- Name: hastaliklar_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.hastaliklar_id_seq OWNED BY public.hastaliklar.id;
+
+
+--
+-- Name: hemsire; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.hemsire (
+    brans character varying(100) NOT NULL
+)
+INHERITS (public.personel);
+
+
+ALTER TABLE public.hemsire OWNER TO postgres;
+
+--
+-- Name: hizmetci; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.hizmetci (
+    departman character varying(100)
+)
+INHERITS (public.personel);
+
+
+ALTER TABLE public.hizmetci OWNER TO postgres;
+
+--
+-- Name: ilaclar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.ilaclar (
+    id integer NOT NULL,
+    ad character varying(100),
+    aciklama text,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.ilaclar OWNER TO postgres;
+
+--
+-- Name: ilaclar_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.ilaclar_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.ilaclar_id_seq OWNER TO postgres;
+
+--
+-- Name: ilaclar_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.ilaclar_id_seq OWNED BY public.ilaclar.id;
+
+
+--
+-- Name: logs; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.logs (
+    logid integer NOT NULL,
+    islem text,
+    pk_deger text,
+    tarih timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.logs OWNER TO postgres;
+
+--
+-- Name: logs_logid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.logs_logid_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.logs_logid_seq OWNER TO postgres;
+
+--
+-- Name: logs_logid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.logs_logid_seq OWNED BY public.logs.logid;
+
+
+--
+-- Name: maliye; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.maliye (
+    id integer NOT NULL,
+    hasta_tc_no character(11),
+    odeme_turu character varying(50),
+    miktar numeric(10,2),
+    tarih date,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.maliye OWNER TO postgres;
+
+--
+-- Name: maliye_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.maliye_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.maliye_id_seq OWNER TO postgres;
+
+--
+-- Name: maliye_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.maliye_id_seq OWNED BY public.maliye.id;
+
+
+--
+-- Name: odalar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.odalar (
+    id integer NOT NULL,
+    kat_no integer,
+    oda_no integer,
+    yatak_sayisi integer,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.odalar OWNER TO postgres;
+
+--
+-- Name: odalar_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.odalar_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.odalar_id_seq OWNER TO postgres;
+
+--
+-- Name: odalar_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.odalar_id_seq OWNED BY public.odalar.id;
+
+
+--
+-- Name: poliklinikler; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.poliklinikler (
+    id integer NOT NULL,
+    ad character varying(100),
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.poliklinikler OWNER TO postgres;
+
+--
+-- Name: poliklinikler_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.poliklinikler_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.poliklinikler_id_seq OWNER TO postgres;
+
+--
+-- Name: poliklinikler_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.poliklinikler_id_seq OWNED BY public.poliklinikler.id;
+
+
+--
+-- Name: randevular; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.randevular (
+    id integer NOT NULL,
+    hasta_tc_no character(11),
+    doktor_tc_no character(11),
+    poliklinik_id integer,
+    randevu_tarihi date,
+    randevu_saati time without time zone,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.randevular OWNER TO postgres;
+
+--
+-- Name: randevular_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.randevular_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.randevular_id_seq OWNER TO postgres;
+
+--
+-- Name: randevular_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.randevular_id_seq OWNED BY public.randevular.id;
+
+
+--
+-- Name: recete_ilaclar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.recete_ilaclar (
+    id integer NOT NULL,
+    recete_id integer,
+    ilac_id integer,
+    miktar integer,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.recete_ilaclar OWNER TO postgres;
+
+--
+-- Name: recete_ilaclar_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.recete_ilaclar_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.recete_ilaclar_id_seq OWNER TO postgres;
+
+--
+-- Name: recete_ilaclar_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.recete_ilaclar_id_seq OWNED BY public.recete_ilaclar.id;
+
+
+--
+-- Name: receteler; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.receteler (
+    id integer NOT NULL,
+    hasta_tc_no character(11),
+    doktor_tc_no character(11),
+    tarih date,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.receteler OWNER TO postgres;
+
+--
+-- Name: receteler_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.receteler_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.receteler_id_seq OWNER TO postgres;
+
+--
+-- Name: receteler_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.receteler_id_seq OWNED BY public.receteler.id;
+
+
+--
+-- Name: tahliller; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tahliller (
+    id integer NOT NULL,
+    hasta_tc_no character(11),
+    tarih date,
+    tahlil_turu character varying(100),
+    sonuc text,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.tahliller OWNER TO postgres;
+
+--
+-- Name: tahliller_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.tahliller_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.tahliller_id_seq OWNER TO postgres;
+
+--
+-- Name: tahliller_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.tahliller_id_seq OWNED BY public.tahliller.id;
+
+
+--
+-- Name: yatislar; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.yatislar (
+    id integer NOT NULL,
+    hasta_tc_no character(11),
+    oda_id integer,
+    baslangic_tarihi date,
+    bitis_tarihi date,
+    aktif boolean DEFAULT true
+);
+
+
+ALTER TABLE public.yatislar OWNER TO postgres;
+
+--
+-- Name: yatislar_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.yatislar_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.yatislar_id_seq OWNER TO postgres;
+
+--
+-- Name: yatislar_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.yatislar_id_seq OWNED BY public.yatislar.id;
+
+
+--
+-- Name: ameliyatlar id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.ameliyatlar ALTER COLUMN id SET DEFAULT nextval('public.ameliyatlar_id_seq'::regclass);
+
+
+--
+-- Name: hasta_hastaliklar id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hasta_hastaliklar ALTER COLUMN id SET DEFAULT nextval('public.hasta_hastaliklar_id_seq'::regclass);
+
+
+--
+-- Name: hastaliklar id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hastaliklar ALTER COLUMN id SET DEFAULT nextval('public.hastaliklar_id_seq'::regclass);
+
+
+--
+-- Name: hemsire aktif; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hemsire ALTER COLUMN aktif SET DEFAULT true;
+
+
+--
+-- Name: hizmetci aktif; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hizmetci ALTER COLUMN aktif SET DEFAULT true;
+
+
+--
+-- Name: ilaclar id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.ilaclar ALTER COLUMN id SET DEFAULT nextval('public.ilaclar_id_seq'::regclass);
+
+
+--
+-- Name: logs logid; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.logs ALTER COLUMN logid SET DEFAULT nextval('public.logs_logid_seq'::regclass);
+
+
+--
+-- Name: maliye id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.maliye ALTER COLUMN id SET DEFAULT nextval('public.maliye_id_seq'::regclass);
+
+
+--
+-- Name: odalar id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.odalar ALTER COLUMN id SET DEFAULT nextval('public.odalar_id_seq'::regclass);
+
+
+--
+-- Name: poliklinikler id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.poliklinikler ALTER COLUMN id SET DEFAULT nextval('public.poliklinikler_id_seq'::regclass);
+
+
+--
+-- Name: randevular id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.randevular ALTER COLUMN id SET DEFAULT nextval('public.randevular_id_seq'::regclass);
+
+
+--
+-- Name: recete_ilaclar id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recete_ilaclar ALTER COLUMN id SET DEFAULT nextval('public.recete_ilaclar_id_seq'::regclass);
+
+
+--
+-- Name: receteler id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.receteler ALTER COLUMN id SET DEFAULT nextval('public.receteler_id_seq'::regclass);
+
+
+--
+-- Name: tahliller id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tahliller ALTER COLUMN id SET DEFAULT nextval('public.tahliller_id_seq'::regclass);
+
+
+--
+-- Name: yatislar id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.yatislar ALTER COLUMN id SET DEFAULT nextval('public.yatislar_id_seq'::regclass);
+
+
+--
+-- Data for Name: ameliyatlar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.ameliyatlar (id, hasta_tc_no, doktor_tc_no, tarih, aciklama, aktif) FROM stdin;
+872     12345678901     12345678901     2024-12-20      AÃ§Ä±k kalp ameliyatÄ±  t
+873     12345678901     12345678901     2024-12-20      AÃ§Ä±k kalp ameliyatÄ±  t
+874     10987654321     12345678901     2024-12-21      Laparoskopik apandisit  t
+\.
+
+
+--
+-- Data for Name: doktorlar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.doktorlar (tc_no, ad, soyad, pozisyon, telefon, email, uzmanlik, aktif) FROM stdin;
+12345678901     Mehmet  Demir   Doktor  5311223344      mehmet.demir@hospital.com       \N      t
+\.
+
+
+--
+-- Data for Name: hasta_hastaliklar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.hasta_hastaliklar (id, hasta_tc_no, hastalik_id, teshis_tarihi, aktif) FROM stdin;
+7       12345678901     7       2024-01-15      t
+8       10987654321     6       2024-02-10      t
+\.
+
+
+--
+-- Data for Name: hastalar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.hastalar (tc_no, ad, soyad, dogum_tarihi, cinsiyet, telefon, adres, durum, aktif, email) FROM stdin;
+12345678901     Ali     YÄ±lmaz 1990-05-12      t       5312345678      Ä°stanbul, TÃ¼rkiye     Randevu AlÄ±ndÄ±        t       \N
+10987654321     AyÅYe   Kara    1985-11-20      f       5487654321      Ankara, TÃ¼rkiye        Randevu AlÄ±ndÄ±        t       \N
+\.
+
+
+--
+-- Data for Name: hastaliklar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.hastaliklar (id, ad, aciklama, aktif) FROM stdin;
+6       Hipertansiyon   YÃ¼ksek kan basÄ±ncÄ± nedeniyle oluÅYan durum.  t
+7       AstÄ±m  Solunum yollarÄ±nda daralma sonucu oluÅYan hastalÄ±k.   t
+\.
+
+
+--
+-- Data for Name: hemsire; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.hemsire (tc_no, ad, soyad, pozisyon, telefon, email, aktif, brans) FROM stdin;
+10987654321     Zeynep  Ã-ztÃ¼rk        Hemsire 5422334455      zeynep.ozturk@hospital.com      t       muayene
+\.
+
+
+--
+-- Data for Name: hizmetci; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.hizmetci (tc_no, ad, soyad, pozisyon, telefon, email, aktif, departman) FROM stdin;
+10987654326     Zeynep  Kilar   Temizlikci      5422333425      zeynep.k@hospital.com   t       \N
+\.
+
+
+--
+-- Data for Name: ilaclar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.ilaclar (id, ad, aciklama, aktif) FROM stdin;
+6       Aspirin AÄYrÄ± kesici ve ateÅY dÃ¼ÅYÃ¼rÃ¼cÃ¼.   t
+7       Ventolin        AstÄ±m tedavisinde kullanÄ±lan inhaler ilaÃ§.   t
+\.
+
+
+--
+-- Data for Name: logs; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.logs (logid, islem, pk_deger, tarih) FROM stdin;
+228     Yeni personel eklendi   12345678902     2024-12-22 15:40:43.449073
+229     Yeni personel eklendi   12345678903     2024-12-22 15:40:43.449073
+230     Yeni doktorlar eklendi  12345678903     2024-12-22 15:40:43.449073
+231     personel silindi        12345678902     2024-12-22 15:43:56.946686
+232     personel silindi        12345678903     2024-12-22 15:43:56.946686
+233     doktorlar silindi       12345678903     2024-12-22 15:43:56.946686
+236     Yeni personel eklendi   12345678902     2024-12-22 15:44:58.553714
+237     Yeni personel eklendi   12345678903     2024-12-22 15:44:58.553714
+238     Yeni doktorlar eklendi  12345678903     2024-12-22 15:44:58.553714
+239     personel silindi        12345678902     2024-12-22 15:53:15.327067
+240     personel silindi        12345678903     2024-12-22 15:53:15.327067
+241     doktorlar silindi       12345678903     2024-12-22 15:53:15.327067
+253     Yeni personel eklendi   12345678908     2024-12-22 15:55:25.273676
+254     personel silindi        12345678908     2024-12-22 15:56:02.300741
+257     Yeni personel eklendi   12345678902     2024-12-22 15:57:34.287401
+258     Yeni personel eklendi   12345678903     2024-12-22 15:57:34.287401
+259     Yeni doktorlar eklendi  12345678903     2024-12-22 15:57:34.287401
+260     personel silindi        12345678902     2024-12-22 15:58:10.568375
+261     personel silindi        12345678903     2024-12-22 15:58:10.568375
+262     doktorlar silindi       12345678903     2024-12-22 15:58:10.568375
+263     Yeni personel eklendi   12345678902     2024-12-22 15:58:22.90906
+264     Yeni personel eklendi   12345678903     2024-12-22 15:58:22.90906
+265     Yeni doktorlar eklendi  12345678903     2024-12-22 15:58:22.90906
+282     Yeni hastalar eklendi   10131136950     2024-12-22 18:08:38.879609
+283     Yeni hastalar eklendi   string  2024-12-22 18:11:02.410497
+290     Yeni randevular eklendi 15      2024-12-22 18:28:42.088149
+291     Yeni maliye eklendi     13      2024-12-22 18:30:59.294959
+293     Yeni hastalar eklendi   10131136951     2024-12-22 19:02:16.971382
+297     Yeni receteler eklendi  569     2024-12-22 21:41:18.066336
+326     Yeni hizmetci eklendi   10987654326     2024-12-22 21:53:22.209976
+327     Yeni poliklinikler eklendi      19      2024-12-22 21:53:28.969673
+328     Yeni poliklinikler eklendi      20      2024-12-22 21:53:28.969673
+330     Yeni randevular eklendi 20      2024-12-22 21:54:36.611533
+331     Yeni randevular eklendi 21      2024-12-22 21:54:36.611533
+332     Yeni hastaliklar eklendi        6       2024-12-22 21:54:47.584687
+333     Yeni hastaliklar eklendi        7       2024-12-22 21:54:47.584687
+334     Yeni hasta_hastaliklar eklendi  7       2024-12-22 21:55:09.558153
+335     Yeni hasta_hastaliklar eklendi  8       2024-12-22 21:55:09.558153
+336     Yeni ilaclar eklendi    6       2024-12-22 21:55:15.678919
+337     Yeni ilaclar eklendi    7       2024-12-22 21:55:15.678919
+339     Yeni receteler eklendi  573     2024-12-22 21:55:53.121178
+340     Yeni receteler eklendi  574     2024-12-22 21:55:55.882929
+341     Yeni recete_ilaclar eklendi     11      2024-12-22 21:56:37.905185
+342     Yeni recete_ilaclar eklendi     12      2024-12-22 21:56:37.905185
+343     Yeni odalar eklendi     7       2024-12-22 21:56:44.132472
+344     Yeni odalar eklendi     8       2024-12-22 21:56:44.132472
+345     Yeni yatislar eklendi   8       2024-12-22 21:57:05.303468
+346     Yeni yatislar eklendi   9       2024-12-22 21:57:05.303468
+347     Yeni ameliyatlar eklendi        872     2024-12-22 21:57:14.33704
+348     Yeni ameliyatlar eklendi        873     2024-12-22 21:57:22.066967
+349     Yeni ameliyatlar eklendi        874     2024-12-22 21:57:22.066967
+350     Yeni tahliller eklendi  5       2024-12-22 21:57:28.110536
+351     Yeni tahliller eklendi  6       2024-12-22 21:57:28.110536
+352     Yeni maliye eklendi     14      2024-12-22 21:57:34.153989
+353     Yeni maliye eklendi     15      2024-12-22 21:57:34.153989
+266     personel silindi        12345678902     2024-12-22 15:58:55.474375
+267     personel silindi        12345678903     2024-12-22 15:58:55.474375
+268     doktorlar silindi       12345678903     2024-12-22 15:58:55.474375
+269     Yeni personel eklendi   12345678902     2024-12-22 15:59:03.341638
+270     Yeni personel eklendi   12345678903     2024-12-22 15:59:03.341638
+271     Yeni doktorlar eklendi  12345678903     2024-12-22 16:02:56.646952
+272     personel silindi        12345678902     2024-12-22 16:12:46.300205
+273     personel silindi        12345678903     2024-12-22 16:12:46.300205
+274     doktorlar silindi       12345678903     2024-12-22 16:12:46.300205
+275     Yeni doktorlar eklendi  12345678903     2024-12-22 16:14:46.169934
+276     Yeni doktorlar eklendi  12345678904     2024-12-22 16:14:46.169934
+277     Yeni hastalar eklendi   98765432100     2024-12-22 16:16:05.843932
+279     Yeni ameliyatlar eklendi        8       2024-12-22 16:16:19.230907
+280     ameliyatlar silindi     8       2024-12-22 18:07:47.746994
+281     hastalar silindi        98765432100     2024-12-22 18:07:54.647618
+284     hastalar silindi        string  2024-12-22 18:18:06.326474
+285     hastalar silindi        10131136950     2024-12-22 18:18:06.326474
+286     Yeni hastalar eklendi   10131136950     2024-12-22 18:23:06.354348
+287     Yeni personel eklendi   10231136950     2024-12-22 18:23:55.607332
+288     Yeni doktorlar eklendi  10231136950     2024-12-22 18:23:55.607332
+289     Yeni poliklinikler eklendi      18      2024-12-22 18:25:52.343401
+292     Yeni ameliyatlar eklendi        871     2024-12-22 18:51:21.628061
+294     Yeni odalar eklendi     6       2024-12-22 21:27:33.47123
+295     Yeni yatislar eklendi   5       2024-12-22 21:28:04.288627
+296     Yeni yatislar eklendi   6       2024-12-22 21:28:36.42249
+298     Yeni receteler eklendi  570     2024-12-22 21:48:14.033313
+300     receteler silindi       569     2024-12-22 21:50:00.316061
+301     receteler silindi       570     2024-12-22 21:50:00.316061
+305     randevular silindi      15      2024-12-22 21:50:09.202552
+306     yatislar silindi        5       2024-12-22 21:50:15.960304
+307     yatislar silindi        6       2024-12-22 21:50:15.960304
+308     odalar silindi  6       2024-12-22 21:50:18.798642
+309     ameliyatlar silindi     871     2024-12-22 21:50:23.312618
+311     maliye silindi  13      2024-12-22 21:50:30.369686
+312     hastalar silindi        10131136951     2024-12-22 21:50:33.325741
+313     hastalar silindi        10131136950     2024-12-22 21:50:33.325741
+314     poliklinikler silindi   18      2024-12-22 21:50:37.971969
+315     hemsire silindi 12345678901     2024-12-22 21:50:44.397546
+316     hemsire silindi 12345678902     2024-12-22 21:50:44.397546
+317     doktorlar silindi       12345678903     2024-12-22 21:50:51.435865
+318     doktorlar silindi       12345678904     2024-12-22 21:50:51.435865
+319     doktorlar silindi       10231136950     2024-12-22 21:50:51.435865
+320     personel silindi        10231136950     2024-12-22 21:50:55.645603
+321     Yeni hastalar eklendi   12345678901     2024-12-22 21:51:36.551224
+322     Yeni hastalar eklendi   10987654321     2024-12-22 21:51:36.551224
+324     Yeni doktorlar eklendi  12345678901     2024-12-22 21:52:28.142556
+325     Yeni hemsire eklendi    10987654321     2024-12-22 21:52:28.142556
+\.
+
+
+--
+-- Data for Name: maliye; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.maliye (id, hasta_tc_no, odeme_turu, miktar, tarih, aktif) FROM stdin;
+14      12345678901     Kredi KartÄ±    200.50  2024-12-20      t
+15      10987654321     Nakit   150.00  2024-12-21      t
+\.
+
+
+--
+-- Data for Name: odalar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.odalar (id, kat_no, oda_no, yatak_sayisi, aktif) FROM stdin;
+7       1       101     2       t
+8       2       202     3       t
+\.
+
+
+--
+-- Data for Name: personel; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.personel (tc_no, ad, soyad, pozisyon, telefon, email, aktif) FROM stdin;
+\.
+
+
+--
+-- Data for Name: poliklinikler; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.poliklinikler (id, ad, aktif) FROM stdin;
+19      Genel Cerrahi   t
+20      Dahiliye        t
+\.
+
+
+--
+-- Data for Name: randevular; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.randevular (id, hasta_tc_no, doktor_tc_no, poliklinik_id, randevu_tarihi, randevu_saati, aktif) FROM stdin;
+20      12345678901     12345678901     19      2024-12-24      09:00:00        t
+21      10987654321     12345678901     20      2024-12-25      10:30:00        t
+\.
+
+
+--
+-- Data for Name: recete_ilaclar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.recete_ilaclar (id, recete_id, ilac_id, miktar, aktif) FROM stdin;
+11      573     6       30      t
+12      574     7       15      t
+\.
+
+
+--
+-- Data for Name: receteler; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.receteler (id, hasta_tc_no, doktor_tc_no, tarih, aktif) FROM stdin;
+573     12345678901     12345678901     2024-12-20      t
+574     10987654321     12345678901     2024-12-21      t
+\.
+
+
+--
+-- Data for Name: tahliller; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.tahliller (id, hasta_tc_no, tarih, tahlil_turu, sonuc, aktif) FROM stdin;
+5       12345678901     2024-12-20      Kan Tahlili     Normal  t
+6       10987654321     2024-12-21      RÃ¶ntgen        Anormal t
+\.
+
+
+--
+-- Data for Name: yatislar; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.yatislar (id, hasta_tc_no, oda_id, baslangic_tarihi, bitis_tarihi, aktif) FROM stdin;
+8       12345678901     8       2024-12-20      2024-12-22      t
+9       10987654321     7       2024-12-21      2024-12-23      t
+\.
+
+
+--
+-- Name: ameliyatlar_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.ameliyatlar_id_seq', 874, true);
+
+
+--
+-- Name: hasta_hastaliklar_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.hasta_hastaliklar_id_seq', 8, true);
+
+
+--
+-- Name: hastaliklar_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.hastaliklar_id_seq', 7, true);
+
+
+--
+-- Name: ilaclar_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.ilaclar_id_seq', 7, true);
+
+
+--
+-- Name: logs_logid_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.logs_logid_seq', 353, true);
+
+
+--
+-- Name: maliye_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.maliye_id_seq', 15, true);
+
+
+--
+-- Name: odalar_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.odalar_id_seq', 8, true);
+
+
+--
+-- Name: poliklinikler_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.poliklinikler_id_seq', 20, true);
+
+
+--
+-- Name: randevular_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.randevular_id_seq', 21, true);
+
+
+--
+-- Name: recete_ilaclar_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.recete_ilaclar_id_seq', 12, true);
+
+
+--
+-- Name: receteler_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.receteler_id_seq', 574, true);
+
+
+--
+-- Name: tahliller_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.tahliller_id_seq', 6, true);
+
+
+--
+-- Name: yatislar_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
+--
+
+SELECT pg_catalog.setval('public.yatislar_id_seq', 9, true);
+
+
+--
+-- Name: ameliyatlar ameliyatlar_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.ameliyatlar
+    ADD CONSTRAINT ameliyatlar_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: doktorlar doktorlar_tc_no_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.doktorlar
+    ADD CONSTRAINT doktorlar_tc_no_key UNIQUE (tc_no);
+
+
+--
+-- Name: hasta_hastaliklar hasta_hastaliklar_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hasta_hastaliklar
+    ADD CONSTRAINT hasta_hastaliklar_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hastalar hastalar_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hastalar
+    ADD CONSTRAINT hastalar_pkey PRIMARY KEY (tc_no);
+
+
+--
+-- Name: hastaliklar hastaliklar_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hastaliklar
+    ADD CONSTRAINT hastaliklar_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hemsire hemsire_pk; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hemsire
+    ADD CONSTRAINT hemsire_pk PRIMARY KEY (tc_no);
+
+
+--
+-- Name: ilaclar ilaclar_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.ilaclar
+    ADD CONSTRAINT ilaclar_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: logs logs_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.logs
+    ADD CONSTRAINT logs_pkey PRIMARY KEY (logid);
+
+
+--
+-- Name: maliye maliye_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.maliye
+    ADD CONSTRAINT maliye_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: odalar odalar_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.odalar
+    ADD CONSTRAINT odalar_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: personel personel_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.personel
+    ADD CONSTRAINT personel_pkey PRIMARY KEY (tc_no);
+
+
+--
+-- Name: poliklinikler poliklinikler_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.poliklinikler
+    ADD CONSTRAINT poliklinikler_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: randevular randevular_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.randevular
+    ADD CONSTRAINT randevular_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: recete_ilaclar recete_ilaclar_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recete_ilaclar
+    ADD CONSTRAINT recete_ilaclar_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: receteler receteler_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.receteler
+    ADD CONSTRAINT receteler_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tahliller tahliller_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tahliller
+    ADD CONSTRAINT tahliller_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: yatislar yatislar_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.yatislar
+    ADD CONSTRAINT yatislar_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: randevular hasta_durum_guncelle_odeme_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER hasta_durum_guncelle_odeme_trigger AFTER INSERT ON public.randevular FOR EACH ROW EXECUTE FUNCTION public.hasta_durum_guncelle();
+
+
+--
+-- Name: randevular hasta_durum_guncelle_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER hasta_durum_guncelle_trigger AFTER INSERT ON public.randevular FOR EACH ROW EXECUTE FUNCTION public.hasta_durum_guncelle();
+
+
+--
+-- Name: ameliyatlar kontrol_ameliyat_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER kontrol_ameliyat_trigger BEFORE INSERT ON public.ameliyatlar FOR EACH ROW EXECUTE FUNCTION public.kontrol_ameliyat_trigger_function();
+
+
+--
+-- Name: doktorlar log_doktorlar; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_doktorlar AFTER INSERT OR DELETE ON public.doktorlar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function();
+
+
+--
+-- Name: hastalar log_hastalar; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_hastalar AFTER INSERT OR DELETE ON public.hastalar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function();
+
+
+--
+-- Name: ameliyatlar log_hemsire; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_hemsire AFTER INSERT OR DELETE OR UPDATE ON public.ameliyatlar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: hemsire log_hemsire; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_hemsire AFTER INSERT OR DELETE OR UPDATE ON public.hemsire FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function();
+
+
+--
+-- Name: hizmetci log_hemsire; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_hemsire AFTER INSERT OR DELETE OR UPDATE ON public.hizmetci FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function();
+
+
+--
+-- Name: hasta_hastaliklar log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.hasta_hastaliklar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: hastaliklar log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.hastaliklar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: ilaclar log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.ilaclar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: maliye log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.maliye FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: odalar log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.odalar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: poliklinikler log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.poliklinikler FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+--
+-- Name: randevular log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.randevular FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: recete_ilaclar log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.recete_ilaclar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: receteler log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.receteler FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: tahliller log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.tahliller FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: yatislar log_islemi_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_islemi_trigger AFTER INSERT OR DELETE ON public.yatislar FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function_id();
+
+
+--
+-- Name: personel log_personel; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER log_personel AFTER INSERT OR DELETE ON public.personel FOR EACH ROW EXECUTE FUNCTION public.log_islemi_function();
+
+
+--
+-- Name: randevular randevu_saati_kontrol; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER randevu_saati_kontrol BEFORE INSERT OR UPDATE ON public.randevular FOR EACH ROW EXECUTE FUNCTION public.randevu_saati_kontrol();
+
+--
+-- Name: hastalar trg_email_kontrol; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_email_kontrol BEFORE INSERT OR UPDATE ON public.hastalar FOR EACH ROW EXECUTE FUNCTION public.email_kontrol();
+
+
+--
+-- Name: personel trg_email_kontrol; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_email_kontrol BEFORE INSERT OR UPDATE ON public.personel FOR EACH ROW EXECUTE FUNCTION public.email_kontrol();
+
+
+--
+-- Name: hastalar trg_hasta_telefon_kontrol; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_hasta_telefon_kontrol BEFORE INSERT OR UPDATE ON public.hastalar FOR EACH ROW EXECUTE FUNCTION public.hasta_telefon_kontrol();
+
+
+--
+-- Name: personel trg_personel_telefon_kontrol; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE TRIGGER trg_personel_telefon_kontrol BEFORE INSERT OR UPDATE ON public.personel FOR EACH ROW EXECUTE FUNCTION public.personel_telefon_kontrol();
+
+
+--
+-- Name: ameliyatlar ameliyatlar_doktor_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.ameliyatlar
+    ADD CONSTRAINT ameliyatlar_doktor_tc_no_fkey FOREIGN KEY (doktor_tc_no) REFERENCES public.doktorlar(tc_no);
+
+
+--
+-- Name: ameliyatlar ameliyatlar_hasta_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.ameliyatlar
+    ADD CONSTRAINT ameliyatlar_hasta_tc_no_fkey FOREIGN KEY (hasta_tc_no) REFERENCES public.hastalar(tc_no);
+
+
+--
+-- Name: hasta_hastaliklar hasta_hastaliklar_hasta_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hasta_hastaliklar
+    ADD CONSTRAINT hasta_hastaliklar_hasta_tc_no_fkey FOREIGN KEY (hasta_tc_no) REFERENCES public.hastalar(tc_no);
+
+
+--
+-- Name: hasta_hastaliklar hasta_hastaliklar_hastalik_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.hasta_hastaliklar
+    ADD CONSTRAINT hasta_hastaliklar_hastalik_id_fkey FOREIGN KEY (hastalik_id) REFERENCES public.hastaliklar(id);
+
+
+--
+-- Name: maliye maliye_hasta_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.maliye
+    ADD CONSTRAINT maliye_hasta_tc_no_fkey FOREIGN KEY (hasta_tc_no) REFERENCES public.hastalar(tc_no);
+
+
+--
+-- Name: randevular randevular_doktor_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.randevular
+    ADD CONSTRAINT randevular_doktor_tc_no_fkey FOREIGN KEY (doktor_tc_no) REFERENCES public.doktorlar(tc_no);
+
+
+--
+-- Name: randevular randevular_hasta_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.randevular
+    ADD CONSTRAINT randevular_hasta_tc_no_fkey FOREIGN KEY (hasta_tc_no) REFERENCES public.hastalar(tc_no);
+
+
+--
+-- Name: randevular randevular_poliklinik_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.randevular
+    ADD CONSTRAINT randevular_poliklinik_id_fkey FOREIGN KEY (poliklinik_id) REFERENCES public.poliklinikler(id);
+
+
+--
+-- Name: recete_ilaclar recete_ilaclar_ilac_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recete_ilaclar
+    ADD CONSTRAINT recete_ilaclar_ilac_id_fkey FOREIGN KEY (ilac_id) REFERENCES public.ilaclar(id);
+
+
+--
+-- Name: recete_ilaclar recete_ilaclar_recete_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.recete_ilaclar
+    ADD CONSTRAINT recete_ilaclar_recete_id_fkey FOREIGN KEY (recete_id) REFERENCES public.receteler(id);
+
+
+--
+-- Name: receteler receteler_doktor_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.receteler
+    ADD CONSTRAINT receteler_doktor_tc_no_fkey FOREIGN KEY (doktor_tc_no) REFERENCES public.doktorlar(tc_no);
+
+
+--
+-- Name: receteler receteler_hasta_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.receteler
+    ADD CONSTRAINT receteler_hasta_tc_no_fkey FOREIGN KEY (hasta_tc_no) REFERENCES public.hastalar(tc_no);
+
+
+--
+-- Name: tahliller tahliller_hasta_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tahliller
+    ADD CONSTRAINT tahliller_hasta_tc_no_fkey FOREIGN KEY (hasta_tc_no) REFERENCES public.hastalar(tc_no);
+
+
+--
+-- Name: yatislar yatislar_hasta_tc_no_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.yatislar
+    ADD CONSTRAINT yatislar_hasta_tc_no_fkey FOREIGN KEY (hasta_tc_no) REFERENCES public.hastalar(tc_no);
+
+
+--
+-- Name: yatislar yatislar_oda_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.yatislar
+    ADD CONSTRAINT yatislar_oda_id_fkey FOREIGN KEY (oda_id) REFERENCES public.odalar(id);
+
+
+--
+-- Name: SCHEMA public; Type: ACL; Schema: -; Owner: postgres
+--
+
+REVOKE USAGE ON SCHEMA public FROM PUBLIC;
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
